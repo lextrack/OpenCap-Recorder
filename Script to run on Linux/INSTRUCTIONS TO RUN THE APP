@@ -1,0 +1,29 @@
+1. Make sure both files are in the same folder:
+   - app.py
+   - run.sh
+   - requirements.txt (if needed)
+
+2. Open a terminal in that folder.
+
+3. Create the virtual environment (only once):
+   python3 -m venv venv
+
+4. Activate the virtual environment:
+   source venv/bin/activate
+
+5. Install dependencies:
+   pip install -r requirements.txt
+
+6. Give execution permission to the launcher script (only once):
+   chmod +x run.sh
+
+7. Run the app using:
+   ./run.sh
+
+The script will automatically activate the virtual environment and run the application.
+
+-------------------------
+Requirements:
+- Python 3 installed
+- Linux system with terminal access
+- Dependencies listed in requirements.txt (if available)

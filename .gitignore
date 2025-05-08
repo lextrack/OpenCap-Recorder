@@ -1,0 +1,10 @@
+venv
+app.log
+config.ini
+base/__pycache__
+platforms/__pycache__
+common/__pycache__
+OutputFiles
+OpenCap Recorder.spec
+dist
+build
