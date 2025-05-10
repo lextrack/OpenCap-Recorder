@@ -34,7 +34,15 @@ class WindowsRecorder(ScreenRecorderBase):
         
         cmd = [ffmpeg_path, "-list_devices", "true", "-f", "dshow", "-i", "dummy"]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8', errors='replace')
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                check=True, 
+                encoding='utf-8', 
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             lines = result.stderr.splitlines()
             devices = []
             
@@ -403,7 +411,13 @@ class WindowsRecorder(ScreenRecorderBase):
 
             try:
                 print(f"Executing command: {' '.join(concat_command)}")
-                result = subprocess.run(concat_command, check=True, capture_output=True, text=True)
+                result = subprocess.run(
+                    concat_command, 
+                    check=True, 
+                    capture_output=True, 
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
                 print(f"FFmpeg output: {result.stderr}")
 
                 os.remove(concat_file)

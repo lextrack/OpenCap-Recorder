@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import locale
+import platform
 from PyQt6.QtWidgets import QMessageBox
 from base.audio_manager_base import AudioManagerBase
 
@@ -13,7 +14,15 @@ class WindowsAudioManager(AudioManagerBase):
        
         cmd = [ffmpeg_path, "-list_devices", "true", "-f", "dshow", "-i", "dummy"]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8', errors='replace')
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                check=True, 
+                encoding='utf-8', 
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+            )
             lines = result.stderr.splitlines()
             devices = []
            

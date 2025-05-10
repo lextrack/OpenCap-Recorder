@@ -1,6 +1,12 @@
 import threading
 import time
 from PyQt6.QtCore import QObject, pyqtSignal
+import platform
+
+try:
+    from common.subprocess_helper import run_subprocess
+except ImportError:
+    from subprocess import run as run_subprocess
 
 class AudioDeviceMonitor(QObject):
 
