@@ -663,7 +663,7 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
             self.preview_btn.setText(self.t("start_preview"))
         else:
             self.preview_running = True
-            self.preview_timer.start(30)
+            self.preview_timer.start(60)
             self.preview_btn.setText(self.t("stop_preview"))
             
     def update_preview(self):
@@ -725,7 +725,7 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
                     screenshot = cv2.resize(screenshot, (new_width, new_height), 
                                         interpolation=cv2.INTER_LINEAR)
                 else:
-                    screenshot = cv2.resize(screenshot, (160, 90), 
+                    screenshot = cv2.resize(screenshot, (170, 90), 
                                         interpolation=cv2.INTER_LINEAR)
                 
                 h, w, ch = screenshot.shape
