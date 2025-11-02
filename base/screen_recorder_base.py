@@ -44,32 +44,26 @@ class AudioDeviceSelector(QDialog):
         
         layout = QVBoxLayout(self)
         
-        # Device list
         self.device_list = QListWidget()
         self.device_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         
         for device in audio_devices:
             self.device_list.addItem(device)
         
-        # Volume controls container
         self.volume_container = QWidget()
         self.volume_layout = QGridLayout(self.volume_container)
         self.volume_controls = {}
         
-        # Create volume sliders for each device
         for i, device in enumerate(audio_devices):
-            # Label
             label = QLabel(device)
             self.volume_layout.addWidget(label, i, 0)
             
-            # Volume slider
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(0, 100)
             slider.setValue(100)
             slider.setMinimumWidth(150)
             self.volume_layout.addWidget(slider, i, 1)
             
-            # Volume value label
             value_label = QLabel("100%")
             value_label.setFixedWidth(40)
             self.volume_layout.addWidget(value_label, i, 2)
@@ -79,14 +73,11 @@ class AudioDeviceSelector(QDialog):
                 'label': value_label
             }
             
-            # Connect slider to update label
             slider.valueChanged.connect(lambda v, label=value_label: label.setText(f"{v}%"))
             
-        # Instructions
         instructions = QLabel(parent.t("select_devices_recording"))
         instructions.setWordWrap(True)
         
-        # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | 
             QDialogButtonBox.StandardButton.Cancel,
@@ -94,13 +85,11 @@ class AudioDeviceSelector(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         
-        # Layout
         layout.addWidget(instructions)
         layout.addWidget(self.device_list)
         layout.addWidget(self.volume_container)
         layout.addWidget(buttons)
         
-        # Connect selection changes
         self.device_list.itemSelectionChanged.connect(self.update_volume_visibility)
         
     def update_volume_visibility(self):
@@ -381,7 +370,6 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # Top panel for settings
         self.top_group = QGroupBox(self.t("app_settings"))
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(10, 5, 10, 5)
@@ -443,12 +431,10 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
 
         content_layout = QHBoxLayout()
         
-        # Left panel
         left_panel = QWidget()
         left_panel.setFixedWidth(400)
         left_layout = QVBoxLayout(left_panel)
         
-        # Monitor selection
         self.monitor_group = QGroupBox(self.t("monitor"))
         monitor_layout = QVBoxLayout()
         self.monitor_combo = QComboBox()
@@ -460,7 +446,6 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         self.monitor_group.setLayout(monitor_layout)
         left_layout.addWidget(self.monitor_group)
 
-        # Video settings
         self.video_settings_group = QGroupBox(self.t("video_settings"))
         video_layout = QGridLayout()
 
@@ -500,7 +485,6 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         self.video_settings_group.setLayout(video_layout)
         left_layout.addWidget(self.video_settings_group)
 
-        # Audio settings
         self.audio_settings_group = QGroupBox(self.t("audio_settings"))
         audio_layout = QVBoxLayout()
         
@@ -515,7 +499,6 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         self.audio_settings_group.setLayout(audio_layout)
         left_layout.addWidget(self.audio_settings_group)
 
-        # Output settings
         self.output_settings_group = QGroupBox(self.t("output_settings"))
         output_layout = QHBoxLayout()
         
@@ -535,12 +518,10 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         
         left_layout.addStretch()
         
-        # Right panel
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setSpacing(5)
         
-        # Preview
         self.preview_group = QGroupBox(self.t("preview"))
         preview_layout = QVBoxLayout()
         preview_layout.setContentsMargins(5, 5, 5, 5)
@@ -558,7 +539,6 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         
         right_layout.addWidget(self.preview_group, 3)
         
-        # Controls
         self.controls_group = QGroupBox(self.t("controls"))
         controls_layout = QGridLayout()
         controls_layout.setSpacing(5)
@@ -600,13 +580,11 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
         self.controls_group.setLayout(controls_layout)
         right_layout.addWidget(self.controls_group)
         
-        # Add panels to content layout
         content_layout.addWidget(left_panel)
         content_layout.addWidget(right_panel)
         
         main_layout.addLayout(content_layout)
         
-        # Bottom panel for timer and status
         bottom_layout = QHBoxLayout()
         
         self.timer_label = QLabel("00:00:00")
@@ -855,13 +833,87 @@ class ScreenRecorderBase(QMainWindow, abc.ABC, metaclass=ABCQtMeta):
     def show_error_message(self, error):
         QMessageBox.critical(self, "Error", error)
         
-    @abc.abstractmethod
     def stop_recording(self):
-        pass
+        if self.recording_process:
+            try:
+                self.recording_process.stdin.write('q')
+                self.recording_process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass
+            try:
+                self.recording_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.recording_process.terminate()
+                try:
+                    self.recording_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.recording_process.kill()
+
+            for pipe in [self.recording_process.stdin, self.recording_process.stdout, self.recording_process.stderr]:
+                try:
+                    pipe.close()
+                except:
+                    pass
+
+            if os.path.exists(self.video_path) and os.path.getsize(self.video_path) > 0:
+                self.video_parts.append(self.video_path)
+
+            self.recording_process = None
+
+        self.status_label.setText(self.t("status_saving"))
+        self.update()
         
-    @abc.abstractmethod
+        self.concat_video_parts()
+        
+        self.toggle_widgets(recording=False)
+        self.stop_timer()
+        self.status_label.setText(self.t("status_ready"))
+        
+        self.record_area = None
+        self.running = False
+        
     def read_ffmpeg_output(self):
-        pass
+        if self.recording_process:
+            buffer = []
+            last_progress_log = 0
+            
+            try:
+                for stdout_line in iter(self.recording_process.stderr.readline, ""):
+                    line = stdout_line.strip()
+                    
+                    try:
+                        if isinstance(line, bytes):
+                            line = line.decode('utf-8', errors='replace')
+                    except:
+                        pass
+
+                    if "A/V sync" in line or "late audio frame" in line or "asynchronous" in line:
+                        self.logger.warning(f"Audio sync warning: {line}")
+                    elif "error" in line.lower() and "fatal" in line.lower():
+                        self.logger.error(f"FFmpeg Critical Error: {line}")
+                    elif "error" in line.lower():
+                        self.logger.error(f"FFmpeg Error: {line}")
+                    elif "warning" in line.lower():
+                        self.logger.warning(f"FFmpeg Warning: {line}")
+                    elif "frame=" in line or "fps=" in line or "size=" in line:
+                        current_time = time.time()
+                        if current_time - last_progress_log > 1.0:
+                            self.logger.debug(f"FFmpeg Progress: {line}")
+                            last_progress_log = current_time
+                    elif "configuration:" not in line and "libav" not in line and line:
+                        buffer.append(line)
+
+                        if len(buffer) >= 10:
+                            self.logger.info(f"FFmpeg Output: {' | '.join(buffer)}")
+                            buffer = []
+                            
+            except BrokenPipeError:
+                self.logger.warning("FFMPEG PROCESS HAS BEEN CLOSED")
+            except Exception as e:
+                self.logger.error(f"ERROR READING FFMPEG OUTPUT: {e}")
+            finally:
+                if buffer:
+                    self.logger.info(f"FFmpeg Output: {' | '.join(buffer)}")
         
     @abc.abstractmethod
     def concat_video_parts(self):

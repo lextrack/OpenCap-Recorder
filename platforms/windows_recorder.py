@@ -116,7 +116,7 @@ class WindowsRecorder(ScreenRecorderBase):
         codec = self.codec_combo.currentText()
 
         selected_devices = self.get_selected_audio_devices()
-    
+
         if not selected_devices:
             QMessageBox.critical(self, self.t("error"), self.t("error_no_selected_audio_device"))
             self.status_signals.status_changed.emit(self.t("error_recording"))
@@ -133,14 +133,6 @@ class WindowsRecorder(ScreenRecorderBase):
             )
             self.status_signals.status_changed.emit(self.t("error_recording"))
             return
-        
-        if not selected_devices:
-            QMessageBox.critical(self, self.t("error"), self.t("error_no_selected_audio_device"))
-            self.status_signals.status_changed.emit(self.t("error_recording"))
-            self.stop_recording()
-            self.stop_timer()
-            self.toggle_widgets(False)
-            return
 
         monitor_index = self.monitor_combo.currentIndex()
         monitor = self.monitors[monitor_index]
@@ -153,9 +145,6 @@ class WindowsRecorder(ScreenRecorderBase):
             if width <= 0 or height <= 0:
                 QMessageBox.critical(self, self.t("error"), self.t("error_invalid_area"))
                 self.status_signals.status_changed.emit(self.t("error_recording"))
-                self.stop_recording()
-                self.stop_timer()
-                self.toggle_widgets(False)
                 return
 
             width -= width % 2
@@ -163,9 +152,6 @@ class WindowsRecorder(ScreenRecorderBase):
             if width <= 0 or height <= 0:
                 QMessageBox.critical(self, self.t("error"), self.t("error_adjusted_area"))
                 self.status_signals.status_changed.emit(self.t("error_recording"))
-                self.stop_recording()
-                self.stop_timer()
-                self.toggle_widgets(False)
                 return
         else:
             x1 = y1 = 0
@@ -173,6 +159,7 @@ class WindowsRecorder(ScreenRecorderBase):
             height = monitor.height
 
         ffmpeg_path = self.get_ffmpeg_path()
+        
         if len(selected_devices) > 1:
             ffmpeg_args = [
                 ffmpeg_path,
@@ -190,32 +177,26 @@ class WindowsRecorder(ScreenRecorderBase):
             for i, (device, volume) in enumerate(selected_devices):
                 normalized_device = self._normalize_audio_device_name(device)
 
-                # Multitrack audio recording and video settings
                 ffmpeg_args.extend([
                     "-f", "dshow",
-                    "-thread_queue_size", "2048",
-                    "-audio_buffer_size", "10",
-                    "-probesize", "25M",
-                    "-analyzeduration", "5M",
-                    "-rtbufsize", "500M",
+                    "-thread_queue_size", "512",
+                    "-audio_buffer_size", "20",
                     "-i", f"audio={normalized_device}"
                 ])
                 
-                audio_filters.append(f"[{i+1}:a]aresample=async=1:min_hard_comp=0.01:first_pts=0,volume={volume/100*3.0:.2f},highpass=f=50,lowpass=f=15000,asetpts=PTS-STARTPTS[a{i}]")
+                # Filtro simplificado solo con volumen
+                audio_filters.append(f"[{i+1}:a]volume={volume/100:.2f}[a{i}]")
                 audio_map.append(f"[a{i}]")
             
-            filter_complex = f"{';'.join(audio_filters)};{''.join(audio_map)}amix=inputs={len(selected_devices)}:duration=longest[aout]"
+            filter_complex = f"{';'.join(audio_filters)};{''.join(audio_map)}amix=inputs={len(selected_devices)}:duration=longest:dropout_transition=0[aout]"
             
             ffmpeg_args.extend([
                 "-filter_complex", filter_complex,
                 "-map", "0:v",
                 "-map", "[aout]",
-                "-async", "1",
-                "-fps_mode", "vfr",
             ])
             
         else:
-            # Only one audio device selected
             device, volume = selected_devices[0]
             normalized_device = self._normalize_audio_device_name(device)
             
@@ -228,45 +209,54 @@ class WindowsRecorder(ScreenRecorderBase):
                 "-video_size", f"{width}x{height}",
                 "-i", "desktop",
                 "-f", "dshow",
-                "-thread_queue_size", "2048",
-                "-audio_buffer_size", "10",
-                "-rtbufsize", "500M",
+                "-thread_queue_size", "512",
+                "-audio_buffer_size", "20",
                 "-i", f"audio={normalized_device}",
-                "-filter:a", f"aresample=async=1:min_hard_comp=0.01:first_pts=0,volume={volume/100*3.0:.2f},highpass=f=50,lowpass=f=15000,asetpts=PTS-STARTPTS",
+                "-filter:a", f"volume={volume/100:.2f}",
                 "-map", "0:v",
                 "-map", "1:a",
-                "-async", "1",
-                "-fps_mode", "vfr",
             ]
 
         ffmpeg_args.extend([
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "48000",
+            "-ac", "2",
             "-threads", "0",
             "-pix_fmt", "yuv420p",
+            "-vsync", "cfr",
+            "-r", str(fps),
             "-loglevel", "warning",
             "-hide_banner",
-            "-fflags", "+genpts",
-            "-use_wallclock_as_timestamps", "1",
             "-max_muxing_queue_size", "1024"
         ])
 
         if codec == "libx264":
             ffmpeg_args.extend([
                 "-c:v", "libx264",
-                "-preset", "medium",
-                "-x264-params", f"bitrate={bitrate.rstrip('k')}:vbv-maxrate={bitrate.rstrip('k')}:vbv-bufsize={int(int(bitrate.rstrip('k'))/2)}:nal-hrd=cbr",
+                "-preset", "veryfast",
+                "-b:v", bitrate,
+                "-minrate", bitrate,
+                "-maxrate", bitrate,
+                "-bufsize", bitrate,
+                "-g", str(fps * 2),
+                "-keyint_min", str(fps),
             ])
         elif codec == "libx265":
             ffmpeg_args.extend([
                 "-c:v", "libx265",
-                "-preset", "ultrafast",
-                "-x265-params", f"bitrate={int(bitrate.rstrip('k'))}:vbv-maxrate={int(bitrate.rstrip('k'))}:vbv-bufsize={int(int(bitrate.rstrip('k'))/2)}:rc-lookahead=20:cbqpoffs=0:crqpoffs=0:crf=23",
+                "-preset", "veryfast",
+                "-b:v", bitrate,
+                "-minrate", bitrate,
+                "-maxrate", bitrate,
+                "-bufsize", bitrate,
+                "-x265-params", f"keyint={fps*2}:min-keyint={fps}",
             ])
         else:
             ffmpeg_args.extend([
                 "-c:v", codec,
                 "-b:v", bitrate,
             ])
-
         ffmpeg_args.append(self.video_path)
         
         self.logger.info(f"FFmpeg command: {' '.join(ffmpeg_args)}")
@@ -285,17 +275,11 @@ class WindowsRecorder(ScreenRecorderBase):
             QMessageBox.critical(self, "Error", "FFmpeg not found.")
             self.status_signals.status_changed.emit(self.t("error_recording"))
             self.logger.error(f"FFmpeg not found: {e}")
-            self.stop_recording()
-            self.stop_timer()
-            self.toggle_widgets(False)
             return
         except Exception as e:
             QMessageBox.critical(self, "Error", "An error has occurred.")
             self.status_signals.status_changed.emit(self.t("error_recording"))
             self.logger.error(f"Error starting recording: {e}")
-            self.stop_recording()
-            self.stop_timer()
-            self.toggle_widgets(False)
             return
 
         self.toggle_widgets(recording=True)
@@ -305,89 +289,6 @@ class WindowsRecorder(ScreenRecorderBase):
             self.start_timer()
 
         threading.Thread(target=self.read_ffmpeg_output, daemon=True).start()
-        
-    def stop_recording(self):
-        if self.recording_process:
-            try:
-                self.recording_process.stdin.write('q')
-                self.recording_process.stdin.flush()
-            except (BrokenPipeError, OSError):
-                pass
-            try:
-                self.recording_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.recording_process.terminate()
-                try:
-                    self.recording_process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self.recording_process.kill()
-
-            for pipe in [self.recording_process.stdin, self.recording_process.stdout, self.recording_process.stderr]:
-                try:
-                    pipe.close()
-                except:
-                    pass
-
-            if os.path.exists(self.video_path) and os.path.getsize(self.video_path) > 0:
-                self.video_parts.append(self.video_path)
-
-            self.recording_process = None
-
-        self.status_label.setText(self.t("status_saving"))
-        self.update()
-        
-        self.concat_video_parts()
-        
-        self.toggle_widgets(recording=False)
-        self.stop_timer()
-        self.status_label.setText(self.t("status_ready"))
-        
-        self.record_area = None
-        self.running = False
-        
-    def read_ffmpeg_output(self):
-        if self.recording_process:
-            buffer = []
-            last_progress_log = 0
-            import time
-            
-            try:
-                for stdout_line in iter(self.recording_process.stderr.readline, ""):
-                    line = stdout_line.strip()
-                    
-                    try:
-                        if isinstance(line, bytes):
-                            line = line.decode('utf-8', errors='replace')
-                    except:
-                        pass
-
-                    if "A/V sync" in line or "late audio frame" in line or "asynchronous" in line:
-                        self.logger.warning(f"Audio sync warning: {line}")
-                    elif "error" in line.lower() and "fatal" in line.lower():
-                        self.logger.error(f"FFmpeg Critical Error: {line}")
-                    elif "error" in line.lower():
-                        self.logger.error(f"FFmpeg Error: {line}")
-                    elif "warning" in line.lower():
-                        self.logger.warning(f"FFmpeg Warning: {line}")
-                    elif "frame=" in line or "fps=" in line or "size=" in line:
-                        current_time = time.time()
-                        if current_time - last_progress_log > 1.0:
-                            self.logger.debug(f"FFmpeg Progress: {line}")
-                            last_progress_log = current_time
-                    elif "configuration:" not in line and "libav" not in line and line:
-                        buffer.append(line)
-
-                        if len(buffer) >= 10:
-                            self.logger.info(f"FFmpeg Output: {' | '.join(buffer)}")
-                            buffer = []
-                            
-            except BrokenPipeError:
-                self.logger.warning("FFMPEG PROCESS HAS BEEN CLOSED")
-            except Exception as e:
-                self.logger.error(f"ERROR READING FFMPEG OUTPUT: {e}")
-            finally:
-                if buffer:
-                    self.logger.info(f"FFmpeg Output: {' | '.join(buffer)}")
                     
     def concat_video_parts(self):
         if len(self.video_parts) > 0:

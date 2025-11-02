@@ -113,14 +113,6 @@ class LinuxRecorder(ScreenRecorderBase):
             )
             self.status_signals.status_changed.emit(self.t("error_recording"))
             return
-        
-        if not selected_devices:
-            QMessageBox.critical(self, self.t("error"), self.t("error_no_selected_audio_device"))
-            self.status_signals.status_changed.emit(self.t("error_recording"))
-            self.stop_recording()
-            self.stop_timer()
-            self.toggle_widgets(False)
-            return
 
         monitor_index = self.monitor_combo.currentIndex()
         monitor = self.monitors[monitor_index]
@@ -133,9 +125,6 @@ class LinuxRecorder(ScreenRecorderBase):
             if width <= 0 or height <= 0:
                 QMessageBox.critical(self, self.t("error"), self.t("error_invalid_area"))
                 self.status_signals.status_changed.emit(self.t("error_recording"))
-                self.stop_recording()
-                self.stop_timer()
-                self.toggle_widgets(False)
                 return
 
             width -= width % 2
@@ -143,9 +132,6 @@ class LinuxRecorder(ScreenRecorderBase):
             if width <= 0 or height <= 0:
                 QMessageBox.critical(self, self.t("error"), self.t("error_adjusted_area"))
                 self.status_signals.status_changed.emit(self.t("error_recording"))
-                self.stop_recording()
-                self.stop_timer()
-                self.toggle_widgets(False)
                 return
         else:
             x1 = y1 = 0
@@ -154,7 +140,6 @@ class LinuxRecorder(ScreenRecorderBase):
 
         display = os.getenv('DISPLAY')
         
-        # Multitrack audio recording and video settings
         if len(selected_devices) > 1:
             ffmpeg_args = [
                 "ffmpeg",
@@ -172,28 +157,23 @@ class LinuxRecorder(ScreenRecorderBase):
                 
                 ffmpeg_args.extend([
                     "-f", "pulse",
-                    "-thread_queue_size", "2048",
-                    "-probesize", "25M",
-                    "-analyzeduration", "5M",
-                    "-rtbufsize", "500M",
+                    "-thread_queue_size", "512",
                     "-i", device_name
                 ])
                 
-                audio_filters.append(f"[{i+1}:a]aresample=async=1:min_hard_comp=0.01:first_pts=0,volume={volume/100*1.5:.2f},asetpts=PTS-STARTPTS[a{i}]")
+                # Filtro simplificado solo con volumen
+                audio_filters.append(f"[{i+1}:a]volume={volume/100:.2f}[a{i}]")
                 audio_map.append(f"[a{i}]")
             
-            filter_complex = f"{';'.join(audio_filters)};{''.join(audio_map)}amix=inputs={len(selected_devices)}:duration=longest[aout]"
+            filter_complex = f"{';'.join(audio_filters)};{''.join(audio_map)}amix=inputs={len(selected_devices)}:duration=longest:dropout_transition=0[aout]"
             
             ffmpeg_args.extend([
                 "-filter_complex", filter_complex,
                 "-map", "0:v",
                 "-map", "[aout]",
-                "-async", "1",
-                "-fps_mode", "vfr",
             ])
             
         else:
-            # Only one audio device selected
             device, volume = selected_devices[0]
             device_name = self._extract_device_name(device)
             
@@ -204,39 +184,49 @@ class LinuxRecorder(ScreenRecorderBase):
                 "-video_size", f"{width}x{height}",
                 "-i", f"{display}+{x1+monitor.x},{y1+monitor.y}",
                 "-f", "pulse",
-                "-thread_queue_size", "2048",
+                "-thread_queue_size", "512",
                 "-ac", "2",
                 "-ar", "48000",
-                "-rtbufsize", "500M",
                 "-i", device_name,
-                "-filter:a", f"aresample=async=1:min_hard_comp=0.01:first_pts=0,volume={volume/100*1.5:.2f},asetpts=PTS-STARTPTS",
+                "-filter:a", f"volume={volume/100:.2f}",
                 "-map", "0:v",
                 "-map", "1:a",
-                "-async", "1",
-                "-fps_mode", "vfr",
             ]
 
         ffmpeg_args.extend([
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "48000",
+            "-ac", "2",
             "-threads", "0",
             "-pix_fmt", "yuv420p",
+            "-vsync", "cfr",
+            "-r", str(fps),
             "-loglevel", "warning",
             "-hide_banner",
-            "-fflags", "+genpts",
-            "-use_wallclock_as_timestamps", "1",
             "-max_muxing_queue_size", "1024"
         ])
-
+        
         if codec == "libx264":
             ffmpeg_args.extend([
                 "-c:v", "libx264",
-                "-preset", "medium",
-                "-x264-params", f"bitrate={bitrate.rstrip('k')}:vbv-maxrate={bitrate.rstrip('k')}:vbv-bufsize={int(int(bitrate.rstrip('k'))/2)}:nal-hrd=cbr",
+                "-preset", "veryfast",
+                "-b:v", bitrate,
+                "-minrate", bitrate,
+                "-maxrate", bitrate,
+                "-bufsize", bitrate,
+                "-g", str(fps * 2),
+                "-keyint_min", str(fps),
             ])
         elif codec == "libx265":
             ffmpeg_args.extend([
                 "-c:v", "libx265",
-                "-preset", "ultrafast",
-                "-x265-params", f"bitrate={int(bitrate.rstrip('k'))}:vbv-maxrate={int(bitrate.rstrip('k'))}:vbv-bufsize={int(int(bitrate.rstrip('k'))/2)}:rc-lookahead=20:cbqpoffs=0:crqpoffs=0:crf=23",
+                "-preset", "veryfast",
+                "-b:v", bitrate,
+                "-minrate", bitrate,
+                "-maxrate", bitrate,
+                "-bufsize", bitrate,
+                "-x265-params", f"keyint={fps*2}:min-keyint={fps}",
             ])
         else:
             ffmpeg_args.extend([
@@ -260,17 +250,11 @@ class LinuxRecorder(ScreenRecorderBase):
             QMessageBox.critical(self, "Error", "FFmpeg not found.")
             self.status_signals.status_changed.emit(self.t("error_recording"))
             self.logger.error(f"FFmpeg not found: {e}")
-            self.stop_recording()
-            self.stop_timer()
-            self.toggle_widgets(False)
             return
         except Exception as e:
             QMessageBox.critical(self, "Error", "An error has occurred.")
             self.status_signals.status_changed.emit(self.t("error_recording"))
             self.logger.error(f"Error starting recording: {e}")
-            self.stop_recording()
-            self.stop_timer()
-            self.toggle_widgets(False)
             return
 
         self.toggle_widgets(recording=True)
