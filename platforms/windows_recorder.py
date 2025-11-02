@@ -26,6 +26,33 @@ class WindowsRecorder(ScreenRecorderBase):
         else:
             self.setWindowIcon(self.style().standardIcon(self.style().StandardPixmap.SP_MediaPlay))
             self.logger.warning(f"Ícono no encontrado en: {icon_path}")
+    
+    def _is_stereo_mix_device(self, device_name):
+        device_lower = device_name.lower()
+        
+        stereo_mix_keywords = [
+            "stereo mix",
+            "mezcla estéreo",
+            "mezcla estereo",
+            "mixage stéréo",
+            "stereo-mix",
+            "stereomix",
+            "what u hear",
+            "wave out mix",
+            "rec. playback",
+            "立體聲混音",
+            "立体声混音",
+            "ステレオミキサー",
+            "스테레오 믹스",
+            "stereomikser",
+            "mikser stereo",
+            "стерео микшер",
+            "áudio do sistema",
+            "loop",
+            "loopback"
+        ]
+        
+        return any(keyword in device_lower for keyword in stereo_mix_keywords)
         
     def get_audio_devices(self):
         ffmpeg_path = self.get_ffmpeg_path()
@@ -54,7 +81,18 @@ class WindowsRecorder(ScreenRecorderBase):
 
             if not devices:
                 self.logger.error("No active audio devices were found. Please check your audio settings or activate Stereo Mix.")
-                QMessageBox.critical(self, "Error", "No active audio devices were found. Please check your audio settings or activate Stereo Mix.")
+                QMessageBox.warning(
+                    self, 
+                    "Warning", 
+                    "No active audio devices found.\n\n"
+                    "To record system audio:\n"
+                    "1. Right-click on the speaker icon in taskbar\n"
+                    "2. Select 'Sound settings' → 'More sound settings'\n"
+                    "3. Go to 'Recording' tab\n"
+                    "4. Right-click and enable 'Show Disabled Devices'\n"
+                    "5. Enable 'Stereo Mix' and set as default\n\n"
+                    "Alternative: Install VB-Audio Virtual Cable for better quality."
+                )
 
             return devices
 
@@ -159,7 +197,6 @@ class WindowsRecorder(ScreenRecorderBase):
             height = monitor.height
 
         ffmpeg_path = self.get_ffmpeg_path()
-        
         if len(selected_devices) > 1:
             ffmpeg_args = [
                 ffmpeg_path,
@@ -184,8 +221,11 @@ class WindowsRecorder(ScreenRecorderBase):
                     "-i", f"audio={normalized_device}"
                 ])
                 
-                # Filtro simplificado solo con volumen
-                audio_filters.append(f"[{i+1}:a]volume={volume/100:.2f}[a{i}]")
+                if self._is_stereo_mix_device(device):
+                    audio_filters.append(f"[{i+1}:a]volume={volume/100*2.5:.2f}[a{i}]")
+                else:
+                    audio_filters.append(f"[{i+1}:a]volume={volume/100:.2f}[a{i}]")
+                
                 audio_map.append(f"[a{i}]")
             
             filter_complex = f"{';'.join(audio_filters)};{''.join(audio_map)}amix=inputs={len(selected_devices)}:duration=longest:dropout_transition=0[aout]"
@@ -200,6 +240,11 @@ class WindowsRecorder(ScreenRecorderBase):
             device, volume = selected_devices[0]
             normalized_device = self._normalize_audio_device_name(device)
             
+            if self._is_stereo_mix_device(device):
+                audio_filter = f"volume={volume/100*2.5:.2f}"
+            else:
+                audio_filter = f"volume={volume/100:.2f}"
+            
             ffmpeg_args = [
                 ffmpeg_path,
                 "-f", "gdigrab",
@@ -212,7 +257,7 @@ class WindowsRecorder(ScreenRecorderBase):
                 "-thread_queue_size", "512",
                 "-audio_buffer_size", "20",
                 "-i", f"audio={normalized_device}",
-                "-filter:a", f"volume={volume/100:.2f}",
+                "-filter:a", audio_filter,
                 "-map", "0:v",
                 "-map", "1:a",
             ]
@@ -257,6 +302,7 @@ class WindowsRecorder(ScreenRecorderBase):
                 "-c:v", codec,
                 "-b:v", bitrate,
             ])
+
         ffmpeg_args.append(self.video_path)
         
         self.logger.info(f"FFmpeg command: {' '.join(ffmpeg_args)}")
@@ -289,7 +335,7 @@ class WindowsRecorder(ScreenRecorderBase):
             self.start_timer()
 
         threading.Thread(target=self.read_ffmpeg_output, daemon=True).start()
-                    
+        
     def concat_video_parts(self):
         if len(self.video_parts) > 0:
             ffmpeg_path = self.get_ffmpeg_path()

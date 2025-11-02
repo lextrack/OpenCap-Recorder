@@ -17,6 +17,21 @@ class LinuxRecorder(ScreenRecorderBase):
             self.setWindowIcon(QIcon('linux_ico.png'))
         else:
             self.setWindowIcon(self.style().standardIcon(self.style().StandardPixmap.SP_MediaPlay))
+    
+    def _is_system_audio_device(self, device_name):
+        device_lower = device_name.lower()
+        
+        system_audio_keywords = [
+            "monitor",
+            "loopback",
+            "what you hear",
+            "stereo mix",
+            "built-in audio analog stereo",
+            "output",
+            "sink"
+        ]
+        
+        return any(keyword in device_lower for keyword in system_audio_keywords)
         
     def get_audio_devices(self):
         devices = []
@@ -62,7 +77,6 @@ class LinuxRecorder(ScreenRecorderBase):
         return audio_device
     
     def _extract_device_name(self, display_name):
-        """Extract the actual device name from the display name"""
         if '(' in display_name and ')' in display_name:
             start_idx = display_name.rfind('(') + 1
             end_idx = display_name.rfind(')')
@@ -161,8 +175,11 @@ class LinuxRecorder(ScreenRecorderBase):
                     "-i", device_name
                 ])
                 
-                # Filtro simplificado solo con volumen
-                audio_filters.append(f"[{i+1}:a]volume={volume/100:.2f}[a{i}]")
+                if self._is_system_audio_device(device):
+                    audio_filters.append(f"[{i+1}:a]volume={volume/100*1.5:.2f}[a{i}]")
+                else:
+                    audio_filters.append(f"[{i+1}:a]volume={volume/100:.2f}[a{i}]")
+                
                 audio_map.append(f"[a{i}]")
             
             filter_complex = f"{';'.join(audio_filters)};{''.join(audio_map)}amix=inputs={len(selected_devices)}:duration=longest:dropout_transition=0[aout]"
@@ -177,6 +194,11 @@ class LinuxRecorder(ScreenRecorderBase):
             device, volume = selected_devices[0]
             device_name = self._extract_device_name(device)
             
+            if self._is_system_audio_device(device):
+                audio_filter = f"volume={volume/100*1.5:.2f}"
+            else:
+                audio_filter = f"volume={volume/100:.2f}"
+            
             ffmpeg_args = [
                 "ffmpeg",
                 "-f", "x11grab",
@@ -188,7 +210,7 @@ class LinuxRecorder(ScreenRecorderBase):
                 "-ac", "2",
                 "-ar", "48000",
                 "-i", device_name,
-                "-filter:a", f"volume={volume/100:.2f}",
+                "-filter:a", audio_filter,
                 "-map", "0:v",
                 "-map", "1:a",
             ]
@@ -206,7 +228,7 @@ class LinuxRecorder(ScreenRecorderBase):
             "-hide_banner",
             "-max_muxing_queue_size", "1024"
         ])
-        
+
         if codec == "libx264":
             ffmpeg_args.extend([
                 "-c:v", "libx264",
@@ -265,89 +287,6 @@ class LinuxRecorder(ScreenRecorderBase):
 
         threading.Thread(target=self.read_ffmpeg_output, daemon=True).start()
         
-    def stop_recording(self):
-        if self.recording_process:
-            try:
-                self.recording_process.stdin.write('q')
-                self.recording_process.stdin.flush()
-            except (BrokenPipeError, OSError):
-                pass
-            try:
-                self.recording_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.recording_process.terminate()
-                try:
-                    self.recording_process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self.recording_process.kill()
-
-            for pipe in [self.recording_process.stdin, self.recording_process.stdout, self.recording_process.stderr]:
-                try:
-                    pipe.close()
-                except:
-                    pass
-
-            if os.path.exists(self.video_path) and os.path.getsize(self.video_path) > 0:
-                self.video_parts.append(self.video_path)
-
-            self.recording_process = None
-
-        self.status_label.setText(self.t("status_saving"))
-        self.update()
-        
-        self.concat_video_parts()
-        
-        self.toggle_widgets(recording=False)
-        self.stop_timer()
-        self.status_label.setText(self.t("status_ready"))
-        
-        self.record_area = None
-        self.running = False
-        
-    def read_ffmpeg_output(self):
-        if self.recording_process:
-            buffer = []
-            last_progress_log = 0
-            import time
-            
-            try:
-                for stdout_line in iter(self.recording_process.stderr.readline, ""):
-                    line = stdout_line.strip()
-                    
-                    try:
-                        if isinstance(line, bytes):
-                            line = line.decode('utf-8', errors='replace')
-                    except:
-                        pass
-
-                    if "A/V sync" in line or "late audio frame" in line or "asynchronous" in line:
-                        self.logger.warning(f"Audio sync warning: {line}")
-                    elif "error" in line.lower() and "fatal" in line.lower():
-                        self.logger.error(f"FFmpeg Critical Error: {line}")
-                    elif "error" in line.lower():
-                        self.logger.error(f"FFmpeg Error: {line}")
-                    elif "warning" in line.lower():
-                        self.logger.warning(f"FFmpeg Warning: {line}")
-                    elif "frame=" in line or "fps=" in line or "size=" in line:
-                        current_time = time.time()
-                        if current_time - last_progress_log > 1.0:
-                            self.logger.debug(f"FFmpeg Progress: {line}")
-                            last_progress_log = current_time
-                    elif "configuration:" not in line and "libav" not in line and line:
-                        buffer.append(line)
-
-                        if len(buffer) >= 5:
-                            self.logger.info(f"FFmpeg Output: {' | '.join(buffer)}")
-                            buffer = []
-                            
-            except BrokenPipeError:
-                self.logger.warning("FFMPEG PROCESS HAS BEEN CLOSED")
-            except Exception as e:
-                self.logger.error(f"ERROR READING FFMPEG OUTPUT: {e}")
-            finally:
-                if buffer:
-                    self.logger.info(f"FFmpeg Output: {' | '.join(buffer)}")
-                    
     def concat_video_parts(self):
         if len(self.video_parts) > 0:
             concat_file = os.path.join(self.output_folder, "concat_list.txt")     
